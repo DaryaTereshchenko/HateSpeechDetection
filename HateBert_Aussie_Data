@@ -1,0 +1,709 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "machine_shape": "hm",
+      "gpuType": "T4",
+      "gpuClass": "premium",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    },
+    "accelerator": "GPU",
+    "gpuClass": "premium"
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/DaryaTereshchenko/HateSpeechDetection/blob/main/HateBert_Aussie_Data\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "a1AdP7YlpgMi"
+      },
+      "outputs": [],
+      "source": [
+        "!pip install sentence_transformers\n",
+        "!pip install transformers"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import numpy as np\n",
+        "import pandas as pd\n",
+        "from sklearn.model_selection import train_test_split\n",
+        "from sklearn.utils.class_weight import compute_class_weight\n",
+        "import tensorflow as tf\n",
+        "from sentence_transformers import SentenceTransformer\n",
+        "from transformers import RobertaTokenizer, TFRobertaModel\n",
+        "import matplotlib.pyplot as plt\n",
+        "import seaborn as sns\n",
+        "import string\n",
+        "from nltk import word_tokenize\n",
+        "from nltk.corpus import stopwords\n",
+        "import nltk\n",
+        "nltk.download('stopwords')\n",
+        "nltk.download('punkt')\n",
+        "from transformers import AutoTokenizer, TFAutoModel\n"
+      ],
+      "metadata": {
+        "id": "qFw2tJmvqQrL",
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "outputId": "7ea29765-2213-4e7a-f0dd-afd3ca014b2e"
+      },
+      "execution_count": 35,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "[nltk_data] Downloading package stopwords to /root/nltk_data...\n",
+            "[nltk_data]   Package stopwords is already up-to-date!\n",
+            "[nltk_data] Downloading package punkt to /root/nltk_data...\n",
+            "[nltk_data]   Package punkt is already up-to-date!\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "from google.colab import drive\n",
+        "drive.mount('/content/drive')"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "c3ZYGtDYyKKn",
+        "outputId": "6478e654-1b5d-4aa3-e3e1-d8d620486a8b"
+      },
+      "execution_count": 3,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Mounted at /content/drive\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "data = pd.read_csv(\"/content/drive/MyDrive/merged_reddit_new.csv\", encoding=\"utf-8\")"
+      ],
+      "metadata": {
+        "id": "H1QGZKfjycCG"
+      },
+      "execution_count": 4,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "stop_words = set(stopwords.words('english'))\n",
+        "def clean_text(line: str):\n",
+        "  punct = [word for word in line.split() if word not in set(string.punctuation)]\n",
+        "  stops = [w for w in punct if w not in stop_words]\n",
+        "  text = \" \".join(stops)\n",
+        "  return text"
+      ],
+      "metadata": {
+        "id": "WsO4mS9vydZv"
+      },
+      "execution_count": 5,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "data[\"text\"] = data[\"text\"].apply(clean_text)"
+      ],
+      "metadata": {
+        "id": "_sxAmekRyg9g"
+      },
+      "execution_count": 6,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "print(\"Longest sentence?\")\n",
+        "print(max(len(x) for x in data.text.values))\n",
+        "print(\"Average length?\")\n",
+        "print(sum(len(x) for x in data.text.values) / len(data.text.values))\n"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "7q-0nxWszJzX",
+        "outputId": "f237db81-ed84-4c6d-b5a6-6d8ff23059cf"
+      },
+      "execution_count": 7,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Longest sentence?\n",
+            "5326\n",
+            "Average length?\n",
+            "167.10247455597684\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "cols = [\"text\", \"class\", \"SENT_D_ADJP\",\n",
+        "        \"SENT_D_ADVP\", \"SENT_D_NP\", \"SENT_D_PP\", \"SENT_D_VP\", \"SENT_ST_DIFFERENCE\", \"SENT_ST_SYMMETRY\", \"SENT_ST_WRDSPERSENT\", \"ST_REPETITIONS_SENT\",\n",
+        "        \"L_I_PRON\", \"L_HE_PRON\", \"L_SHE_PRON\", \"L_IT_PRON\", \"L_YOU_PRON\", \"L_WE_PRON\", \"L_THEY_PRON\", \"L_ME_PRON\", \"L_YOU_OBJ_PRON\", \"L_HIM_PRON\", \"L_HER_OBJECT_PRON\",\n",
+        "        \"L_IT_OBJECT_PRON\", \"L_US_PRON\", \"L_THEM_PRON\", \"L_MY_PRON\", \"L_YOUR_PRON\", \"L_HIS_PRON\", \"L_HER_PRON\", \"L_ITS_PRON\", \"L_OUR_PRON\", \"L_THEIR_PRON\", \"L_YOURS_PRON\",\n",
+        "        \"L_THEIRS_PRON\", \"L_HERS_PRON\", \"L_OURS_PRON\", \"L_MYSELF_PRON\", \"L_YOURSELF_PRON\", \"L_HIMSELF_PRON\", \"L_HERSELF_PRON\", \"L_ITSELF_PRON\", \"L_OURSELVES_PRON\",\n",
+        "        \"L_YOURSELVES_PRON\", \"L_THEMSELVES_PRON\", \"L_FIRST_PERSON_SING_PRON\", \"L_FIRST_PERSON_PL_PRON\", \"L_SECOND_PERSON_PRON\", \"L_THIRD_PERSON_SING_PRON\", \"L_THIRD_PERSON_PLURAL_PRON\",\n",
+        "        \"VT_PRESENT_SIMPLE\", \"VT_PRESENT_PROGRESSIVE\", \"VT_PRESENT_PERFECT\", \"VT_PRESENT_PERFECT_PROGR\", \"VT_PRESENT_SIMPLE_PASSIVE\", \"VT_PRESENT_PROGR_PASSIVE\", \"VT_PRESENT_PERFECT_PASSIVE\",\n",
+        "        \"VT_PAST_SIMPLE\", \"VT_PAST_SIMPLE_BE\", \"VT_PAST_PROGR\", \"VT_PAST_PERFECT\", \"VT_PAST_PERFECT_PROGR\", \"VT_PAST_SIMPLE_PASSIVE\", \"VT_PAST_POGR_PASSIVE\", \"VT_PAST_PERFECT_PASSIVE\",\n",
+        "        \"VT_FUTURE_SIMPLE\", \"VT_FUTURE_PROGRESSIVE\", \"VT_FUTURE_PERFECT\", \"VT_FUTURE_PERFECT_PROGR\", \"VT_FUTURE_SIMPLE_PASSIVE\", \"VT_FUTURE_PROGR_PASSIVE\", \"VT_FUTURE_PERFECT_PASSIVE\", \"VT_WOULD\",\n",
+        "        \"VT_WOULD_PASSIVE\", \"VT_WOULD_PROGRESSIVE\", \"VT_WOULD_PERFECT\", \"VT_WOULD_PERFECT_PASSIVE\", \"VT_SHOULD\", \"VT_SHOULD_PASSIVE\", \"VT_SHALL\", \"VT_SHALL_PASSIVE\", \"VT_SHOULD_PROGRESSIVE\", \"VT_SHOULD_PERFECT\",\n",
+        "        \"VT_SHOULD_PERFECT_PASSIVE\", \"VT_MUST\", \"VT_MUST_PASSIVE\", \"VT_MUST_PROGRESSIVE\", \"VT_MUST_PERFECT\", \"VT_MST_PERFECT_PASSIVE\", \"VT_CAN\", \"VT_CAN_PASSIVE\", \"VT_COULD\", \"VT_COULD_PASSIVE\",\n",
+        "        \"VT_CAN_PROGRESSIVE\", \"VT_COULD_PROGRESSIVE\", \"VT_COULD_PERFECT\", \"VT_COULD_PERFECT_PASSIVE\", \"VT_MAY\", \"VT_MAY_PASSIVE\", \"VT_MIGHT\", \"VT_MIGHT_PASSIVE\", \"VT_MAY_PROGRESSIVE\", \"VT_MIGTH_PERFECT\",\n",
+        "        \"VT_MIGHT_PERFECT_PASSIVE\", \"VT_MAY_PERFECT_PASSIVE\", \"MASKED\", \"URLS\", \"DIGIT\", \"POSITIV\", \"NEGATIV\", \"NEUTRAL\", \"DECR\", \"INCR\"]\n",
+        "\n",
+        "general = [\"class\"]\n",
+        "\n",
+        "text_statistics  = [\"SENT_D_ADJP\",\n",
+        "        \"SENT_D_ADVP\", \"SENT_D_NP\", \"SENT_D_PP\", \"SENT_D_VP\", \"SENT_ST_DIFFERENCE\", \"SENT_ST_SYMMETRY\", \"SENT_ST_WRDSPERSENT\", \"ST_REPETITIONS_SENT\"]\n",
+        "\n",
+        "detalied_lexical = [\"L_I_PRON\", \"L_HE_PRON\", \"L_SHE_PRON\", \"L_IT_PRON\", \"L_YOU_PRON\", \"L_WE_PRON\", \"L_THEY_PRON\", \"L_ME_PRON\", \"L_YOU_OBJ_PRON\", \"L_HIM_PRON\", \"L_HER_OBJECT_PRON\",\n",
+        "        \"L_IT_OBJECT_PRON\", \"L_US_PRON\", \"L_THEM_PRON\", \"L_MY_PRON\", \"L_YOUR_PRON\", \"L_HIS_PRON\", \"L_HER_PRON\", \"L_ITS_PRON\", \"L_OUR_PRON\", \"L_THEIR_PRON\", \"L_YOURS_PRON\",\n",
+        "        \"L_THEIRS_PRON\", \"L_HERS_PRON\", \"L_OURS_PRON\", \"L_MYSELF_PRON\", \"L_YOURSELF_PRON\", \"L_HIMSELF_PRON\", \"L_HERSELF_PRON\", \"L_ITSELF_PRON\", \"L_OURSELVES_PRON\",\n",
+        "        \"L_YOURSELVES_PRON\", \"L_THEMSELVES_PRON\", \"L_FIRST_PERSON_SING_PRON\", \"L_FIRST_PERSON_PL_PRON\", \"L_SECOND_PERSON_PRON\", \"L_THIRD_PERSON_SING_PRON\", \"L_THIRD_PERSON_PLURAL_PRON\"]\n",
+        "\n",
+        "detailed_grammar = [\"VT_PRESENT_SIMPLE\", \"VT_PRESENT_PROGRESSIVE\", \"VT_PRESENT_PERFECT\", \"VT_PRESENT_PERFECT_PROGR\", \"VT_PRESENT_SIMPLE_PASSIVE\", \"VT_PRESENT_PROGR_PASSIVE\", \"VT_PRESENT_PERFECT_PASSIVE\",\n",
+        "        \"VT_PAST_SIMPLE\", \"VT_PAST_SIMPLE_BE\", \"VT_PAST_PROGR\", \"VT_PAST_PERFECT\", \"VT_PAST_PERFECT_PROGR\", \"VT_PAST_SIMPLE_PASSIVE\", \"VT_PAST_POGR_PASSIVE\", \"VT_PAST_PERFECT_PASSIVE\",\n",
+        "        \"VT_FUTURE_SIMPLE\", \"VT_FUTURE_PROGRESSIVE\", \"VT_FUTURE_PERFECT\", \"VT_FUTURE_PERFECT_PROGR\", \"VT_FUTURE_SIMPLE_PASSIVE\", \"VT_FUTURE_PROGR_PASSIVE\", \"VT_FUTURE_PERFECT_PASSIVE\", \"VT_WOULD\",\n",
+        "        \"VT_WOULD_PASSIVE\", \"VT_WOULD_PROGRESSIVE\", \"VT_WOULD_PERFECT\", \"VT_WOULD_PERFECT_PASSIVE\", \"VT_SHOULD\", \"VT_SHOULD_PASSIVE\", \"VT_SHALL\", \"VT_SHALL_PASSIVE\", \"VT_SHOULD_PROGRESSIVE\", \"VT_SHOULD_PERFECT\",\n",
+        "        \"VT_SHOULD_PERFECT_PASSIVE\", \"VT_MUST\", \"VT_MUST_PASSIVE\", \"VT_MUST_PROGRESSIVE\", \"VT_MUST_PERFECT\", \"VT_MST_PERFECT_PASSIVE\", \"VT_CAN\", \"VT_CAN_PASSIVE\", \"VT_COULD\", \"VT_COULD_PASSIVE\",\n",
+        "        \"VT_CAN_PROGRESSIVE\", \"VT_COULD_PROGRESSIVE\", \"VT_COULD_PERFECT\", \"VT_COULD_PERFECT_PASSIVE\", \"VT_MAY\", \"VT_MAY_PASSIVE\", \"VT_MIGHT\", \"VT_MIGHT_PASSIVE\", \"VT_MAY_PROGRESSIVE\", \"VT_MIGTH_PERFECT\",\n",
+        "        \"VT_MIGHT_PERFECT_PASSIVE\", \"VT_MAY_PERFECT_PASSIVE\"]\n",
+        "\n",
+        "social_media = [\"MASKED\", \"URLS\", \"DIGIT\", \"POSITIV\", \"NEGATIV\", \"NEUTRAL\", \"DECR\", \"INCR\"]\n"
+      ],
+      "metadata": {
+        "id": "M635tRQzOLfx"
+      },
+      "execution_count": 8,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "Only Roberta"
+      ],
+      "metadata": {
+        "id": "zETtdy_DywQN"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "X = data.drop(columns=general)\n",
+        "y = data[\"class\"]"
+      ],
+      "metadata": {
+        "id": "1T6IcBELyuSI"
+      },
+      "execution_count": 71,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.30, random_state=42)\n",
+        "X_test, X_val, y_test, y_val = train_test_split(X_test, y_test, test_size=0.10, random_state=42)"
+      ],
+      "metadata": {
+        "id": "iX0go21llJt7"
+      },
+      "execution_count": 72,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "print(X_train.shape)\n",
+        "print(X_test.shape)\n",
+        "print(X_val.shape)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "pclnfKsa-XAB",
+        "outputId": "22e237ef-0f15-4898-fe06-6f73716fdb11"
+      },
+      "execution_count": 73,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "(14030, 194)\n",
+            "(5412, 194)\n",
+            "(602, 194)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "MODEL_NAME = 'GroNLP/hateBERT'\n",
+        "MAX_LEN = 256\n",
+        "SM_LEN = X_train.shape[1]-1\n",
+        "tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)"
+      ],
+      "metadata": {
+        "id": "WB-pJAjVkoeC"
+      },
+      "execution_count": 74,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "def encode(texts, tokenizer):\n",
+        "    ct = len(texts)\n",
+        "    input_ids = np.ones((ct, MAX_LEN), dtype='int32')\n",
+        "    attention_mask = np.zeros((ct, MAX_LEN), dtype='int32')\n",
+        "    token_type_ids = np.zeros((ct, MAX_LEN), dtype='int32') # Not used in text classification\n",
+        "\n",
+        "\n",
+        "    for k, text in enumerate(texts):\n",
+        "        # Tokenize\n",
+        "        tok_text = tokenizer.tokenize(text)\n",
+        "\n",
+        "\n",
+        "        # Truncate and convert tokens to numerical IDs\n",
+        "        enc_text = tokenizer.convert_tokens_to_ids(tok_text[:(MAX_LEN-2)])\n",
+        "\n",
+        "        input_length = len(enc_text) + 2\n",
+        "        input_length = input_length if input_length < MAX_LEN else MAX_LEN\n",
+        "\n",
+        "        # Add tokens [CLS] and [SEP] at the beginning and the end\n",
+        "        input_ids[k,:input_length] = np.asarray([0] + enc_text + [2], dtype='int32')\n",
+        "\n",
+        "        # Set to 1s in the attention input\n",
+        "        attention_mask[k,:input_length] = 1\n",
+        "\n",
+        "    return {\n",
+        "        'input_word_ids': input_ids,\n",
+        "        'input_mask': attention_mask,\n",
+        "        'input_type_ids': token_type_ids\n",
+        "    }"
+      ],
+      "metadata": {
+        "id": "fxpfbMHQkvhj"
+      },
+      "execution_count": 75,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "tokenized_train = encode(X_train.text.values, tokenizer)\n",
+        "tokenized_train[\"sm\"] = X_train.drop(columns=[\"text\"]).values\n",
+        "tokenized_test = encode(X_test.text.values, tokenizer)\n",
+        "tokenized_test[\"sm\"] = X_test.drop(columns=[\"text\"]).values\n",
+        "tokenized_val = encode(X_val.text.values, tokenizer)\n",
+        "tokenized_val[\"sm\"] = X_val.drop(columns=[\"text\"]).values"
+      ],
+      "metadata": {
+        "id": "u2s8_qynkzD_"
+      },
+      "execution_count": 76,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "train = np.asarray(y_train, dtype='int32').reshape(-1,1)\n",
+        "test = np.asarray(y_test, dtype='int32').reshape(-1,1)\n",
+        "val = np.asarray(y_val, dtype='int32').reshape(-1,1)"
+      ],
+      "metadata": {
+        "id": "F20F-ThJ_EIz"
+      },
+      "execution_count": 77,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Calculate weights using sklearn\n",
+        "class_weights = compute_class_weight(\n",
+        "        class_weight=\"balanced\", classes=np.unique(y_train), y=y_train)\n",
+        "class_weights = dict(zip(np.unique(y_train), class_weights))\n",
+        "class_weights"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "N9dbrbgPqixe",
+        "outputId": "b49ed17c-3fd3-437c-cba7-9753b223a2bf"
+      },
+      "execution_count": 78,
+      "outputs": [
+        {
+          "output_type": "execute_result",
+          "data": {
+            "text/plain": [
+              "{0: 0.6589948332550494, 1: 2.072378138847858}"
+            ]
+          },
+          "metadata": {},
+          "execution_count": 78
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "\"\"\"\n",
+        "========================================\n",
+        "HATEBERT + SM\n",
+        "========================================\n",
+        "\"\"\"\n",
+        "def build_model1():\n",
+        "  input_word_ids = tf.keras.Input(shape=(MAX_LEN,), dtype=tf.int32, name='input_word_ids')\n",
+        "  input_mask = tf.keras.Input(shape=(MAX_LEN,), dtype=tf.int32, name='input_mask')\n",
+        "  input_type_ids = tf.keras.Input(shape=(MAX_LEN,), dtype=tf.int32, name='input_type_ids')\n",
+        "  sm = tf.keras.Input(shape=(SM_LEN,), dtype=tf.float32, name='sm')\n",
+        "\n",
+        "\n",
+        "  # Import RoBERTa model from HuggingFace\n",
+        "  roberta_model = TFRobertaModel.from_pretrained(MODEL_NAME, from_pt=True)\n",
+        "  roberta_model.trainable = False\n",
+        "  x = roberta_model(input_word_ids, attention_mask=input_mask, training=False)\n",
+        "\n",
+        "\n",
+        "  x = x[0]\n",
+        "  o = sm\n",
+        "\n",
+        "  # x = tf.keras.layers.Dropout(0.1)(x)\n",
+        "\n",
+        "  x = tf.keras.layers.Flatten()(x)\n",
+        "  x = tf.keras.layers.Dropout(0.3)(x)\n",
+        "  x = tf.keras.layers.concatenate([x,o])\n",
+        "  x = tf.keras.layers.Dense(16, activation='relu')(x)\n",
+        "  y = tf.keras.layers.Dense(1, activation='sigmoid')(x)\n",
+        "\n",
+        "  model = tf.keras.Model(inputs=[input_word_ids, input_mask, input_type_ids, sm], outputs=y)\n",
+        "\n",
+        "  model.compile(\n",
+        "      optimizer=tf.keras.optimizers.legacy.Adam(learning_rate=5e-05),\n",
+        "      loss= tf.keras.losses.binary_crossentropy,\n",
+        "      metrics=['accuracy'])\n",
+        "\n",
+        "  return model"
+      ],
+      "metadata": {
+        "id": "srs7396Y_jWN"
+      },
+      "execution_count": 79,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "model = build_model1()\n",
+        "model.summary()"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "-ghZZHtvThEb",
+        "outputId": "c8bcea19-0da1-4652-f8ba-94a89c4b8daf"
+      },
+      "execution_count": 80,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "Some weights of the PyTorch model were not used when initializing the TF 2.0 model TFRobertaModel: ['lm_head.dense.bias', 'lm_head.layer_norm.weight', 'lm_head.decoder.weight', 'lm_head.dense.weight', 'lm_head.layer_norm.bias', 'lm_head.bias']\n",
+            "- This IS expected if you are initializing TFRobertaModel from a PyTorch model trained on another task or with another architecture (e.g. initializing a TFBertForSequenceClassification model from a BertForPreTraining model).\n",
+            "- This IS NOT expected if you are initializing TFRobertaModel from a PyTorch model that you expect to be exactly identical (e.g. initializing a TFBertForSequenceClassification model from a BertForSequenceClassification model).\n",
+            "All the weights of TFRobertaModel were initialized from the PyTorch model.\n",
+            "If your task is similar to the task the model of the checkpoint was trained on, you can already use TFRobertaModel for predictions without further training.\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Model: \"model_6\"\n",
+            "__________________________________________________________________________________________________\n",
+            " Layer (type)                   Output Shape         Param #     Connected to                     \n",
+            "==================================================================================================\n",
+            " input_word_ids (InputLayer)    [(None, 256)]        0           []                               \n",
+            "                                                                                                  \n",
+            " input_mask (InputLayer)        [(None, 256)]        0           []                               \n",
+            "                                                                                                  \n",
+            " tf_roberta_model_5 (TFRobertaM  TFBaseModelOutputWi  124645632  ['input_word_ids[0][0]',         \n",
+            " odel)                          thPoolingAndCrossAt               'input_mask[0][0]']             \n",
+            "                                tentions(last_hidde                                               \n",
+            "                                n_state=(None, 256,                                               \n",
+            "                                 768),                                                            \n",
+            "                                 pooler_output=(Non                                               \n",
+            "                                e, 768),                                                          \n",
+            "                                 past_key_values=No                                               \n",
+            "                                ne, hidden_states=N                                               \n",
+            "                                one, attentions=Non                                               \n",
+            "                                e, cross_attentions                                               \n",
+            "                                =None)                                                            \n",
+            "                                                                                                  \n",
+            " flatten_7 (Flatten)            (None, 196608)       0           ['tf_roberta_model_5[0][0]']     \n",
+            "                                                                                                  \n",
+            " dropout_306 (Dropout)          (None, 196608)       0           ['flatten_7[0][0]']              \n",
+            "                                                                                                  \n",
+            " sm (InputLayer)                [(None, 193)]        0           []                               \n",
+            "                                                                                                  \n",
+            " concatenate_4 (Concatenate)    (None, 196801)       0           ['dropout_306[0][0]',            \n",
+            "                                                                  'sm[0][0]']                     \n",
+            "                                                                                                  \n",
+            " dense_12 (Dense)               (None, 16)           3148832     ['concatenate_4[0][0]']          \n",
+            "                                                                                                  \n",
+            " input_type_ids (InputLayer)    [(None, 256)]        0           []                               \n",
+            "                                                                                                  \n",
+            " dense_13 (Dense)               (None, 1)            17          ['dense_12[0][0]']               \n",
+            "                                                                                                  \n",
+            "==================================================================================================\n",
+            "Total params: 127,794,481\n",
+            "Trainable params: 3,148,849\n",
+            "Non-trainable params: 124,645,632\n",
+            "__________________________________________________________________________________________________\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "print('Training...')\n",
+        "history = model.fit(tokenized_train,\n",
+        "                    train,\n",
+        "                    epochs=5,\n",
+        "                    batch_size=32,\n",
+        "                    verbose=1,\n",
+        "                    validation_data=(tokenized_val, val), class_weight=class_weights)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "Ftlmu1piTq9G",
+        "outputId": "e6f0aaf6-6edb-4dc6-a4b0-ebdd35f8ef4c"
+      },
+      "execution_count": 81,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Training...\n",
+            "Epoch 1/5\n",
+            "439/439 [==============================] - 263s 574ms/step - loss: 0.5726 - accuracy: 0.7070 - val_loss: 0.5437 - val_accuracy: 0.7193\n",
+            "Epoch 2/5\n",
+            "439/439 [==============================] - 249s 568ms/step - loss: 0.5033 - accuracy: 0.7610 - val_loss: 0.5544 - val_accuracy: 0.7442\n",
+            "Epoch 3/5\n",
+            "439/439 [==============================] - 249s 566ms/step - loss: 0.4758 - accuracy: 0.7768 - val_loss: 0.5356 - val_accuracy: 0.7243\n",
+            "Epoch 4/5\n",
+            "439/439 [==============================] - 249s 568ms/step - loss: 0.4463 - accuracy: 0.7961 - val_loss: 0.5394 - val_accuracy: 0.7292\n",
+            "Epoch 5/5\n",
+            "439/439 [==============================] - 249s 566ms/step - loss: 0.4262 - accuracy: 0.8047 - val_loss: 0.4886 - val_accuracy: 0.7608\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "y_pred = [int(np.round(i,0)) for i in model.predict(tokenized_test)]"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "f1O-FPmZTn-G",
+        "outputId": "e1a1a416-8b0e-40ce-8bed-744b1fceaeca"
+      },
+      "execution_count": 68,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "170/170 [==============================] - 94s 537ms/step\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "from sklearn.metrics import classification_report\n",
+        "print(classification_report(test, y_pred))"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "5q4JXdmQTubX",
+        "outputId": "5e39f55d-007e-43a2-9fa1-1cab34774dce"
+      },
+      "execution_count": 69,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "              precision    recall  f1-score   support\n",
+            "\n",
+            "           0       0.90      0.77      0.83      4067\n",
+            "           1       0.52      0.75      0.61      1345\n",
+            "\n",
+            "    accuracy                           0.76      5412\n",
+            "   macro avg       0.71      0.76      0.72      5412\n",
+            "weighted avg       0.81      0.76      0.78      5412\n",
+            "\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "\"\"\"\n",
+        "========================================\n",
+        "HATEBERT + LSTM + SM\n",
+        "========================================\n",
+        "\"\"\"\n",
+        "def build_model2():\n",
+        "  input_word_ids = tf.keras.Input(shape=(MAX_LEN,), dtype=tf.int32, name='input_word_ids')\n",
+        "  input_mask = tf.keras.Input(shape=(MAX_LEN,), dtype=tf.int32, name='input_mask')\n",
+        "  input_type_ids = tf.keras.Input(shape=(MAX_LEN,), dtype=tf.int32, name='input_type_ids')\n",
+        "  # sm = tf.keras.Input(shape=(193,), dtype=tf.float32, name='sm')\n",
+        "\n",
+        "\n",
+        "  # Import RoBERTa model from HuggingFace\n",
+        "  roberta_model = TFAutoModel.from_pretrained(MODEL_NAME, from_pt=True)\n",
+        "  roberta_model.trainable = False\n",
+        "  x = roberta_model(input_word_ids, attention_mask=input_mask, training=False)\n",
+        "\n",
+        "  x = x[0]\n",
+        "  # o = sm\n",
+        "\n",
+        "  x = tf.keras.layers.GRU(units=150, return_sequences=True)(x)\n",
+        "  # x = tf.keras.layers.Dropout(rate=0.4)(x)\n",
+        "  x = tf.keras.layers.LSTM(200)(x)\n",
+        "  x = tf.keras.layers.Dense(128, activation='gelu')(x)\n",
+        "  x = tf.keras.layers.Dropout(rate=0.4)(x)\n",
+        "  x = tf.keras.layers.Flatten()(x)\n",
+        "  x = tf.keras.layers.Dropout(0.3)(x)\n",
+        "  # x = tf.keras.layers.concatenate([x,o])\n",
+        "  x = tf.keras.layers.Dense(16, activation='relu')(x)\n",
+        "  y = tf.keras.layers.Dense(1, activation='sigmoid')(x)\n",
+        "\n",
+        "  model = tf.keras.Model(inputs=[input_word_ids, input_mask, input_type_ids], outputs=y)\n",
+        "  model.compile(\n",
+        "      optimizer=tf.keras.optimizers.legacy.Adam(learning_rate=5e-05),\n",
+        "      loss= tf.keras.losses.binary_crossentropy,\n",
+        "      metrics=['accuracy'])\n",
+        "\n",
+        "  return model"
+      ],
+      "metadata": {
+        "id": "fshd9u2jHyLt"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "\"\"\"\n",
+        "========================================\n",
+        "HATEBERT + BiLSTM + SM\n",
+        "========================================\n",
+        "\"\"\"\n",
+        "def build_model3():\n",
+        "  input_word_ids = tf.keras.Input(shape=(MAX_LEN,), dtype=tf.int32, name='input_word_ids')\n",
+        "  input_mask = tf.keras.Input(shape=(MAX_LEN,), dtype=tf.int32, name='input_mask')\n",
+        "  input_type_ids = tf.keras.Input(shape=(MAX_LEN,), dtype=tf.int32, name='input_type_ids')\n",
+        "  sm = tf.keras.Input(shape=(SM_LEN,), dtype=tf.float32, name='sm')\n",
+        "\n",
+        "  # Import RoBERTa model from HuggingFace\n",
+        "  roberta_model = TFAutoModel.from_pretrained(MODEL_NAME, from_pt=True)\n",
+        "  roberta_model.trainable = False\n",
+        "  mod = roberta_model(input_word_ids, attention_mask=input_mask, token_type_ids=input_type_ids, training=False)\n",
+        "\n",
+        "  # Huggingface transformers have multiple outputs, embeddings are the first one,\n",
+        "  # so let's slice out the first position\n",
+        "  bert = mod[0]\n",
+        "  o = sm\n",
+        "\n",
+        "  # x1 = tf.keras.layers.SpatialDropout1D(0.3)(bert)\n",
+        "  # x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(256, return_sequences=True))(x1)\n",
+        "\n",
+        "  x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(128, return_sequences=True))(bert)\n",
+        "  x = tf.keras.layers.Dropout(0.3)(x)\n",
+        "  # hidden = tf.keras.layers.GlobalAveragePooling1D()(x)\n",
+        "  hidden = tf.keras.layers.Dropout(0.3)(x)\n",
+        "  hidden = tf.keras.layers.Dense(128, activation='relu')(hidden)\n",
+        "  x = tf.keras.layers.Flatten()(x)\n",
+        "  x = tf.keras.layers.concatenate([x,o])\n",
+        "  x = tf.keras.layers.Dense(16, activation='relu')(x)\n",
+        "  x = tf.keras.layers.Dense(1, activation='sigmoid')(x)\n",
+        "\n",
+        "\n",
+        "  model = tf.keras.Model(inputs=[input_word_ids, input_mask, input_type_ids, sm], outputs=x)\n",
+        "  model.compile(\n",
+        "      optimizer=tf.keras.optimizers.legacy.Adam(learning_rate=5e-05),\n",
+        "      loss= tf.keras.losses.binary_crossentropy,\n",
+        "      metrics=['accuracy'])\n",
+        "\n",
+        "  return model"
+      ],
+      "metadata": {
+        "id": "G3V41nRuJLRo"
+      },
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
